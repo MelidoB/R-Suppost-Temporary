@@ -1,3 +1,16 @@
+
+# RAG Chatbot for R Package Documentation
+
+This project is an AI-powered chatbot designed to answer questions about R packages using their official documentation. It works as follows:
+
+- Downloads R package manuals (PDFs) from the web.
+- Splits the documents into smaller text chunks for efficient searching.
+- Converts these chunks into vector embeddings using OpenAI, and stores them in a Chroma vector database.
+- Provides a FastAPI server with an `/ask` endpoint where users can submit questions.
+- When a question is asked, the system retrieves the most relevant document chunks and uses GPT-4 to generate a concise answer (maximum three sentences), including the sources used.
+
+The project is easy to set up and is ideal for quickly finding information from R package documentation.
+
 =========================
 ✅ Steps to Use the RAG Chatbot
 =========================
