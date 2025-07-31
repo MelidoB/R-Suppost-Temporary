@@ -1,3 +1,30 @@
+# =============================================================================
+# --- Project-Specific Ignores ---
+# =============================================================================
+
+# Ignore the Python virtual environment folders
+# This is crucial to prevent checking in local machine dependencies.
+/venv/
+/env/
+
+# Ignore the generated vector database directories
+# These are built from source files and should not be in version control.
+/course_module_db/
+/chroma_db_persistent/
+/chroma_db_persistent_mock/
+
+# =============================================================================
+# --- Secrets & Environment Variables ---
+# =============================================================================
+
+# Ignore environment variables files, which may contain sensitive API keys
+.env
+.env.*
+
+# =============================================================================
+# --- Standard Python Ignores ---
+# =============================================================================
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -8,7 +35,6 @@ __pycache__/
 
 # Distribution / packaging
 .Python
-env/
 build/
 develop-eggs/
 dist/
@@ -28,7 +54,9 @@ var/
 pip-log.txt
 pip-delete-this-directory.txt
 
-# Unit test / coverage reports
+# =============================================================================
+# --- Testing & Coverage Reports ---
+# =============================================================================
 htmlcov/
 .tox/
 .nox/
@@ -38,35 +66,26 @@ htmlcov/
 nosetests.xml
 coverage.xml
 *.cover
-*.py,cover
 .hypothesis/
+
+# =============================================================================
+# --- Editor & System-Specific Files ---
+# =============================================================================
 
 # Jupyter Notebook
 .ipynb_checkpoints
 
-# pyenv
-.python-version
-
-# mypy
+# mypy cache
 .mypy_cache/
-.dmypy.json
-
-# Pyre type checker
-.pyre/
 
 # VS Code
 .vscode/
 
-# SQLite database
-chroma_db/
+# SQLite (sometimes used by libraries)
 *.sqlite3
-
-# Environment variables
-.env
-.env.*
 
 # MacOS
 .DS_Store
 
-# System files
+# Windows
 Thumbs.db
