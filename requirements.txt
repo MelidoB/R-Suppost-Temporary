@@ -8,3 +8,4 @@ unstructured[pdf]==0.18.11
 fastapi==0.115.5
 uvicorn==0.32.0
 pydantic==2.11.7
+langchain-chroma # <-- ADD THIS

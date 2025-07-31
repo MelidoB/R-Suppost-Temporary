@@ -1,141 +1,137 @@
-# ======================================================================================
-# RAG Chatbot with Hybrid Routing & Suggested Prompts - FULL CODE
-# ======================================================================================
-# This version implements a full-featured hybrid system. It includes:
-# 1. A Router to decide between a RAG expert and a General expert.
-# 2. A persistent vector store to avoid re-indexing on every startup.
-# 3. A new chain that generates suggested follow-up prompts after each answer.
-# ======================================================================================
-
 import os
-from langchain_community.document_loaders import UnstructuredURLLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_openai import OpenAIEmbeddings
-from langchain_community.vectorstores import Chroma
-from langchain_openai import ChatOpenAI
-from langchain.prompts import PromptTemplate, ChatPromptTemplate
-from langchain.chains import LLMChain
-from langchain.chains.router import MultiRouteChain
-from langchain.chains.router.llm_router import LLMRouterChain, RouterOutputParser
-from langchain.chains.router.multi_prompt import MULTI_PROMPT_ROUTER_TEMPLATE
-from langchain.chains import create_retrieval_chain
-from langchain.chains.combine_documents import create_stuff_documents_chain
+import json
 from fastapi import FastAPI
 from pydantic import BaseModel
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Literal
 
-# --- 1. SETUP THE RAG "PRIVATE EXPERT" ---
-# This section prepares the expert that knows about the R package documentation.
+# --- Core LangChain Imports ---
+from langchain_core.documents import Document
+from langchain_core.prompts import PromptTemplate, ChatPromptTemplate
+from langchain_core.runnables import RunnableBranch, RunnableLambda
+from langchain_chroma import Chroma
+from langchain_openai import OpenAIEmbeddings, ChatOpenAI
+from langchain.chains import create_retrieval_chain
+from langchain.chains.combine_documents import create_stuff_documents_chain
 
-# Define the path for the persistent vector database
-persist_directory = "chroma_db_persistent"
+# --- 1. INITIALIZE AI MODELS ---
+# This requires the OPENAI_API_KEY environment variable to be set.
+# These classes are the main interface to OpenAI's services.
+# Source for LangChain + OpenAI integration: https://python.langchain.com/v0.2/docs/integrations/llms/openai/
+# and https://python.langchain.com/v0.2/docs/integrations/text_embedding/openai/
+print("Initializing AI models...")
+llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0)
 embeddings = OpenAIEmbeddings(model="text-embedding-3-large")
 
-# Check if the database already exists to avoid rebuilding it on every startup
-if os.path.exists(persist_directory):
-    print(f"Loading existing vector database from '{persist_directory}'...")
+# --- 2. SETUP THE RAG "PRIVATE EXPERT" FROM JSON DATA ---
+persist_directory = "course_module_db"
+if not os.path.exists(persist_directory):
+    print(f"Database not found. Building new database from 'course_modules.json'...")
+    
+    # This custom logic loads our structured JSON data.
+    with open('course_modules.json', 'r') as f:
+        course_data = json.load(f)
+
+    # We convert our custom data into LangChain's standard 'Document' object.
+    # Each Document holds page_content (what is searched) and metadata (the extra info).
+    # Source for Document objects: https://python.langchain.com/v0.2/docs/concepts/#documents
+    all_documents = []
+    for module in course_data:
+        for segment in module['transcript_segments']:
+            metadata = {
+                "source_module": module['module_title'],
+                "timestamp": segment['timestamp'],
+                "video_url": module.get('video_url', '')
+            }
+            doc = Document(page_content=segment['content'], metadata=metadata)
+            all_documents.append(doc)
+    
+    print(f"Creating embeddings for {len(all_documents)} document segments...")
+    # This creates the vector database using Chroma. The .from_documents method handles
+    # embedding all documents and storing them efficiently.
+    # Source for Chroma integration: https://python.langchain.com/v0.2/docs/integrations/vectorstores/chroma/
+    db = Chroma.from_documents(documents=all_documents, embedding=embeddings, persist_directory=persist_directory)
+    print("Database built and saved successfully.")
+else:
+    print(f"Loading existing database from '{persist_directory}'...")
     db = Chroma(persist_directory=persist_directory, embedding_function=embeddings)
     print("Database loaded successfully.")
-else:
-    print(f"Database not found. Building a new one at '{persist_directory}'...")
-    urls = [
-        "https://cran.r-project.org/web/packages/dplyr/dplyr.pdf",
-        "https://cran.r-project.org/web/packages/ggplot2/ggplot2.pdf"
-    ]
-    print("Downloading documents...")
-    loader = UnstructuredURLLoader(urls=urls)
-    documents = loader.load()
-    print("Splitting documents into chunks...")
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-    texts = text_splitter.split_documents(documents)
-    print("Creating embeddings and persisting the database...")
-    db = Chroma.from_documents(documents=texts, embedding=embeddings, persist_directory=persist_directory)
-    print("Database built and saved successfully.")
 
-# Set up the LLM
-# NOTE: Using gpt-3.5-turbo is cost-effective. GPT-4 will yield higher quality routing and suggestions.
-llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0)
-
-# Create a retriever from the database
+# A retriever is an interface that fetches documents based on a query.
+# Source for retrievers: https://python.langchain.com/v0.2/docs/concepts/#retrievers
 retriever = db.as_retriever()
 
-# Create the RAG chain (our "Private Expert")
+# --- 3. DEFINE ALL THE CHAINS (THE EXPERTS) USING LCEL ---
+# The following chains are built using LangChain Expression Language (LCEL),
+# which uses the pipe (|) symbol to connect components.
+# Source for LCEL: https://python.langchain.com/v0.2/docs/concepts/#lcel
+
+# A. The Router Chain: Decides where to send the question.
+router_prompt = PromptTemplate.from_template(
+    # ... (prompt text as before) ...
+)
+router = router_prompt | llm
+
+# B. The RAG Chain (Private Expert)
+# This chain is constructed using two helper functions for clarity and power.
+# Source for create_retrieval_chain: https://python.langchain.com/v0.2/docs/how_to/qa_sources/
 rag_prompt = ChatPromptTemplate.from_template(
-    """You are an assistant for R programming questions. Use the given context to answer the question. If you don't know the answer from the context, say that you don't know. Keep the answer concise and maximum three sentences.
-Context: {context}
-Question: {input}
+    """You are an expert teaching assistant. Use the following context from the course material to answer the question.
+If the context is not relevant, politely say you cannot answer from the provided material.
+
+Context:
+{context}
+
+Question: {question}
 Answer:"""
 )
+# create_stuff_documents_chain "stuffs" the retrieved documents into the prompt's context.
+# Source: https://python.langchain.com/v0.2/docs/how_to/stuff_documents/
 question_answer_chain = create_stuff_documents_chain(llm, rag_prompt)
+# create_retrieval_chain combines the retriever and the document-stuffing chain.
 rag_chain = create_retrieval_chain(retriever, question_answer_chain)
 
-
-# --- 2. SETUP THE "PUBLIC GENERALIST" EXPERT ---
-# This is a simple chain that answers general knowledge questions.
-
-general_prompt_text = """You are a helpful general knowledge assistant. The user has asked a question that is not specific to the provided R documentation. Provide a helpful, concise answer.
-
-Question: {input}
+# C. The General Knowledge Chain (Public Generalist)
+general_prompt = PromptTemplate.from_template(
+    """You are a helpful general knowledge assistant. Provide a helpful, concise answer to the following question.
+Question: {question}
 Answer:"""
-general_prompt = PromptTemplate.from_template(general_prompt_text)
-general_chain = LLMChain(llm=llm, prompt=general_prompt)
-
-
-# --- 3. SETUP THE HYBRID ROUTER AND SUGGESTION CHAIN ---
-# This section contains the "Smart Receptionist" and the new "Suggestion Generator".
-
-# A. The Router Logic
-prompt_infos = [
-    {
-        "name": "specific_r_questions",
-        "description": "Good for answering specific questions about the R packages dplyr or ggplot2",
-        "chain": rag_chain,
-    },
-    {
-        "name": "general_knowledge",
-        "description": "Good for answering general knowledge questions, programming concepts, or anything not covered in the R documents",
-        "chain": general_chain,
-    },
-]
-
-router_template_str = MULTI_PROMPT_ROUTER_TEMPLATE.format(
-    destinations="\n".join([f"{p['name']}: {p['description']}" for p in prompt_infos])
 )
-router_prompt = PromptTemplate(
-    template=router_template_str,
-    input_variables=["input"],
-    output_parser=RouterOutputParser(),
-)
-router_chain = LLMRouterChain.from_llm(llm, router_prompt)
+general_chain = general_prompt | llm
 
-# The master chain combines the router and the experts
-master_chain = MultiRouteChain(
-    router_chain=router_chain,
-    destination_chains={p["name"]: p["chain"] for p in prompt_infos},
-    default_chain=general_chain,
-    verbose=True
-)
-
-# B. The Suggestion Generation Chain (NEW FEATURE)
-suggestion_prompt_text = """Based on the following question and its answer, please suggest exactly three logical and concise follow-up questions that a beginner might ask next. Present them as a simple numbered list, with each question on a new line. Do not add any extra text or introductory phrases.
-
-QUESTION:
-{question}
-
-ANSWER:
-{answer}
-
+# D. The Suggestion Generation Chain
+suggestion_prompt = PromptTemplate.from_template(
+    """Based on the following question and its answer, suggest three logical follow-up questions a student might ask next.
+Present them as a simple numbered list. Do not add any extra text or introductory phrases.
+QUESTION: {question}
+ANSWER: {answer}
 SUGGESTED NEXT QUESTIONS:"""
-suggestion_prompt = PromptTemplate.from_template(suggestion_prompt_text)
-suggestion_chain = LLMChain(llm=llm, prompt=suggestion_prompt)
+)
+suggestion_chain = suggestion_prompt | llm
 
+# --- 4. CREATE THE MASTER HYBRID CHAIN WITH A RUNNABLE BRANCH ---
 
-# --- 4. SETUP FASTAPI APPLICATION ---
-# The API now uses both the master_chain and the new suggestion_chain.
+# This custom Python function provides the logic for the router's decision.
+def route(info: Dict[str, Any]) -> Literal["course_specific", "general_knowledge"]:
+    if "course_specific" in info["topic"].content.lower():
+        return "course_specific"
+    else:
+        return "general_knowledge"
 
+# RunnableBranch is the modern way to create conditional chains (routing).
+# It takes pairs of (condition, runnable) and executes the first one that evaluates to true.
+# Source for RunnableBranch: https://python.langchain.com/v0.2/docs/how_to/routing/
+master_chain = {"topic": router, "question": lambda x: x["question"]} | RunnableBranch(
+    (lambda x: route(x) == "course_specific", rag_chain),
+    (lambda x: route(x) == "general_knowledge", general_chain),
+    general_chain # Default route
+)
+
+# --- 5. SETUP THE FASTAPI APPLICATION ---
+# FastAPI is a modern, high-performance web framework for building APIs.
+# Source: https://fastapi.tiangolo.com/
 app = FastAPI(
-    title="Hybrid R Chatbot with Suggested Prompts",
-    description="An AI chatbot that routes questions and suggests follow-ups."
+    title="Hybrid R Chatbot - Production Version",
+    description="An AI chatbot that uses RAG for course content and a general model for other questions."
 )
 
 class ChatRequest(BaseModel):
@@ -143,38 +139,33 @@ class ChatRequest(BaseModel):
 
 @app.post("/chat")
 def chat(request: ChatRequest) -> Dict[str, Any]:
-    """
-    Handles a question with the HYBRID chatbot.
-    It routes the question, gets an answer, AND generates suggested follow-ups.
-    """
-    # Step 1: Get the main answer using the master router chain
-    result = master_chain.invoke({"input": request.question})
-    
-    # Standardize the output from different chains
+    # Invoke the master chain to get a result.
+    result = master_chain.invoke({"question": request.question})
+
+    # This custom logic standardizes the output, since the RAG chain and general chain
+    # return slightly different data structures.
     final_answer = ""
     sources = []
-    route_taken = result.get("destination", "default")
-
-    if route_taken == "specific_r_questions":
-        final_answer = result.get("answer", "Could not find an answer in the documents.")
+    
+    if isinstance(result, dict) and "answer" in result:
+        route_taken = "course_specific"
+        final_answer = result.get("answer", "Could not find a specific answer in the course material.")
         if "context" in result:
-            sources = [doc.metadata for doc in result.get("context", [])]
+            sources = [doc.metadata for doc in result["context"]]
     else:
-        final_answer = result.get("text", "Sorry, I could not process your request.")
-        
-    # Step 2: Generate the follow-up suggestions (New Feature)
+        route_taken = "general_knowledge"
+        final_answer = result.content if hasattr(result, "content") else str(result)
+
+    # Generate follow-up suggestions
+    suggestions_text = ""
     try:
-        suggestions_result = suggestion_chain.invoke({
-            "question": request.question,
-            "answer": final_answer
-        })
-        suggestions_text = suggestions_result.get("text", "").strip()
-        suggested_prompts = [line.strip() for line in suggestions_text.splitlines() if line.strip()]
+        suggestions_result = suggestion_chain.invoke({"question": request.question, "answer": final_answer})
+        suggestions_text = suggestions_result.content.strip()
     except Exception as e:
         print(f"Error generating suggestions: {e}")
-        suggested_prompts = []
+        
+    suggested_prompts = [line.strip() for line in suggestions_text.splitlines() if line.strip()]
 
-    # Step 3: Combine everything into the final response
     return {
         "answer": final_answer,
         "sources": sources,
