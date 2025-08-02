@@ -91,3 +91,6 @@ coverage.xml
 Thumbs.db
 
 
+# Ignore the generated vector database directories
+/vector_stores/
+

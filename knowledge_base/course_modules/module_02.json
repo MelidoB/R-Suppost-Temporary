@@ -1,0 +1,15 @@
+{
+  "module_id": "M02",
+  "module_title": "Module 2: Introduction to Data Visualization",
+  "video_url": "https://example.com/course/module-2",
+  "transcript_segments": [
+    {
+      "timestamp": "00:02:10",
+      "content": "Now we'll dive into data visualization using the powerful ggplot2 package. The key idea behind ggplot2 is the 'grammar of graphics'."
+    },
+    {
+      "timestamp": "00:04:32",
+      "content": "The most fundamental function for creating a scatter plot is geom_point(). You add this layer to your ggplot object to render the individual data points."
+    }
+  ]
+}

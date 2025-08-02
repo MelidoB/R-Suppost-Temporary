@@ -1,0 +1,15 @@
+{
+  "module_id": "M01",
+  "module_title": "Module 1: Getting Started with R",
+  "video_url": "https://example.com/course/module-1",
+  "transcript_segments": [
+    {
+      "timestamp": "00:01:15",
+      "content": "Welcome to the course! The core data structure you'll be working with is the data frame, which is like a table or spreadsheet inside your code."
+    },
+    {
+      "timestamp": "00:03:45",
+      "content": "To assign a value to a variable, we use the arrow operator, which is a less-than sign followed by a dash, like this: x <- 5. This is the standard convention in R."
+    }
+  ]
+}
